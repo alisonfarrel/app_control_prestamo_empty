@@ -1,0 +1,30 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {optimize,grossInterest,pending,loanComparison,savingsTax} from '../finance.mjs';
+const banks=[{id:'A',name:'A',tiers:[{to:50000,rate:3},{to:null,rate:2.5}]},{id:'B',name:'B',tiers:[{to:30000,rate:2.8},{to:null,rate:1.5}]}];
+test('interest tier marginal',()=>assert.equal(grossInterest(60000,banks[0].tiers),1750));
+test('optimal marginal allocation',()=>{const r=optimize(85000,banks);assert.equal(r.allocation[0].amount,55000);assert.equal(r.allocation[1].amount,30000);assert.equal(r.total,2465);});
+test('limits respected',()=>{const r=optimize(100000,[{...banks[0],maxBalance:50000}]);assert.equal(r.allocation[0].amount,50000);assert.equal(r.unallocated,50000);});
+test('debt after payments',()=>assert.equal(pending({initial:10000,payments:[{amount:1000},{amount:2500}]}),6500));
+test('no interest loan',()=>{const c=loanComparison({initial:12000,payments:[],apr:0,monthsRemaining:12},1000);assert.equal(c.savedTotal,0);});
+test('early repayment reduces interest',()=>{const c=loanComparison({initial:25000,payments:[],apr:5,monthsRemaining:60},5000);assert.ok(c.savedTotal>0);assert.ok(c.saved12>0);});
+test('Spanish savings bracket example',()=>assert.equal(savingsTax(10000),1980));
+import {shareFactor,ownAmount} from '../finance.mjs';
+test('shared loan personal monthly payment is 50 percent',()=>{const l={sharePercent:50,monthlyPaymentTotal:800};assert.equal(ownAmount(l.monthlyPaymentTotal,l),400);});
+test('shared loan pending and amortization are proportional',()=>{const l={initial:100000,sharePercent:50,payments:[{amount:10000}]};assert.equal(pending(l),90000);assert.equal(ownAmount(pending(l),l),45000);assert.equal(ownAmount(l.payments[0].amount,l),5000);});
+test('legacy loans with no share remain 100 percent',()=>{assert.equal(shareFactor({}),1);assert.equal(ownAmount(500,{}),500);});
+test('different loans can have independent favorite amortizations',()=>{const a={sharePercent:50,favoriteAmortization:2000};const b={sharePercent:100,favoriteAmortization:300};assert.equal(ownAmount(a.favoriteAmortization,a),1000);assert.equal(ownAmount(b.favoriteAmortization,b),300);});
+import {nextInstalment,remainingMonths} from '../finance.mjs';
+test('French instalment breakdown and 50 percent ownership',()=>{const l={initial:100000,payments:[],apr:3,monthlyPaymentTotal:800,monthsRemaining:180,sharePercent:50};const p=nextInstalment(l);assert.deepEqual([p.total,p.interest,p.capital,p.remaining],[800,250,550,99450]);assert.deepEqual([p.personalTotal,p.personalInterest,p.personalCapital],[400,125,275]);});
+test('confirmed ordinary instalment updates debt and months without double subtracting interest',()=>{const l={initial:100000,payments:[{kind:'regular',amount:550,interest:250,total:800}],apr:3,monthlyPaymentTotal:800,monthsRemaining:180};assert.equal(pending(l),99450);assert.equal(remainingMonths(l),179);const p=nextInstalment(l);assert.equal(p.interest,248.63);assert.equal(p.capital,551.37);});
+test('extra repayments do not reduce remaining months count',()=>{const l={initial:10000,payments:[{amount:1000}],apr:0,monthlyPaymentTotal:200,monthsRemaining:60};assert.equal(pending(l),9000);assert.equal(remainingMonths(l),60);});
+test('instalment does not allow negative amortization',()=>{const l={initial:100000,payments:[],apr:12,monthlyPaymentTotal:400,monthsRemaining:120};assert.match(nextInstalment(l).error,/no cubre/);});
+import {projectionWithReview} from '../finance.mjs';
+test('generic instalment splits capital and interest',()=>{
+ const p=nextInstalment({initial:24000,payments:[],apr:6,monthlyPaymentTotal:550,monthsRemaining:60,sharePercent:25});
+ assert.deepEqual([p.total,p.interest,p.capital,p.remaining,p.personalTotal,p.personalInterest,p.personalCapital],[550,120,430,23570,137.5,30,107.5]);
+});
+test('review assumptions affect future interest forecasts',()=>{
+ const loan={initial:24000,payments:[],apr:3,monthlyPaymentTotal:450,monthsRemaining:60,firstDue:'2026-01-31',dueEndOfMonth:true,rateReviewDate:'2027-01-01',futureApr:5};
+ const higher=projectionWithReview(loan,0);const lower=projectionWithReview({...loan,futureApr:2},0);
+ assert.ok(higher.base.interestTotal>lower.base.interestTotal);
+ assert.ok(projectionWithReview(loan,1000).savedTotal>0);
+});
